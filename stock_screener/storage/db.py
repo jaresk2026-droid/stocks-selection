@@ -49,6 +49,27 @@ def init_db() -> None:
             )
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fundamentals (
+                code         TEXT PRIMARY KEY,   -- 6 位代码
+                report_date  TEXT,               -- 财报报告期 YYYYMMDD
+                pe           REAL,               -- 市盈率（动态）
+                pb           REAL,               -- 市净率
+                total_mv     REAL,               -- 总市值（元）
+                circ_mv      REAL,               -- 流通市值（元）
+                eps          REAL,               -- 每股收益
+                bps          REAL,               -- 每股净资产
+                roe          REAL,               -- 净资产收益率（%）
+                revenue      REAL,               -- 营业总收入（元）
+                revenue_yoy  REAL,               -- 营收同比增长（%）
+                profit       REAL,               -- 净利润（元）
+                profit_yoy   REAL,               -- 净利润同比增长（%）
+                gross_margin REAL,               -- 销售毛利率（%）
+                updated_at   TEXT
+            )
+            """
+        )
         for table in KLINE_TABLES.values():
             cur.execute(
                 f"""
@@ -102,6 +123,56 @@ def load_stock_basic() -> pd.DataFrame:
     """读取股票基础信息表。"""
     with connect() as conn:
         return pd.read_sql("SELECT * FROM stock_basic", conn)
+
+
+def update_industry(df: pd.DataFrame) -> int:
+    """用 df(code, industry) 回填 stock_basic.industry（仅更新已存在的股票）。"""
+    df = df.dropna(subset=["industry"])[["code", "industry"]]
+    if df.empty:
+        return 0
+    with connect() as conn:
+        conn.executemany(
+            "UPDATE stock_basic SET industry=? WHERE code=?",
+            [(r.industry, r.code) for r in df.itertuples(index=False)],
+        )
+    return len(df)
+
+
+# ---------------- 基本面 ----------------
+
+FUNDAMENTAL_COLUMNS = [
+    "code", "report_date", "pe", "pb", "total_mv", "circ_mv", "eps", "bps",
+    "roe", "revenue", "revenue_yoy", "profit", "profit_yoy", "gross_margin",
+]
+
+
+def save_fundamentals(df: pd.DataFrame) -> int:
+    """写入/更新基本面表（按 code 覆盖）。缺失列自动补空。"""
+    df = df.reindex(columns=FUNDAMENTAL_COLUMNS).copy()
+    if df.empty:
+        return 0
+    df["updated_at"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    cols = FUNDAMENTAL_COLUMNS + ["updated_at"]
+    rows = [tuple(None if pd.isna(v) else v for v in r)
+            for r in df[cols].itertuples(index=False, name=None)]
+    placeholders = ",".join(["?"] * len(cols))
+    updates = ",".join(f"{c}=excluded.{c}" for c in cols if c != "code")
+    with connect() as conn:
+        conn.executemany(
+            f"INSERT INTO fundamentals ({','.join(cols)}) VALUES ({placeholders}) "
+            f"ON CONFLICT(code) DO UPDATE SET {updates}",
+            rows,
+        )
+    return len(rows)
+
+
+def load_fundamentals() -> dict[str, dict]:
+    """读取基本面表，返回 {code: {字段: 值}}，供选股引擎按股票查。"""
+    with connect() as conn:
+        df = pd.read_sql("SELECT * FROM fundamentals", conn)
+    if df.empty:
+        return {}
+    return {row["code"]: row.to_dict() for _, row in df.iterrows()}
 
 
 # ---------------- K 线 ----------------

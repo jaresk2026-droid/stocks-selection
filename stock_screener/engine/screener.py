@@ -5,13 +5,15 @@ from typing import Sequence
 
 import pandas as pd
 
-from stock_screener.engine.conditions import Condition
+from stock_screener.engine.conditions import Condition, Context
 from stock_screener.indicators import add_indicators
 from stock_screener.storage import db
 
-# 结果中展示的关键指标快照列
-_SNAPSHOT = ["close", "MACD_DIF", "MACD_DEA", "RSI", "KDJ_K", "KDJ_D",
-             "MA5", "MA20", "VOL_RATIO"]
+# 结果中展示的技术面快照列
+_TECH_SNAPSHOT = ["close", "MACD_DIF", "MACD_DEA", "RSI", "KDJ_K", "KDJ_D",
+                  "MA5", "MA20", "VOL_RATIO"]
+# 结果中展示的基本面快照列
+_FUND_SNAPSHOT = ["pe", "pb", "roe", "revenue_yoy", "profit_yoy", "gross_margin"]
 
 
 def screen(conditions: Sequence[Condition], period: str = "daily",
@@ -20,14 +22,15 @@ def screen(conditions: Sequence[Condition], period: str = "daily",
     """对全市场执行选股。
 
     参数：
-        conditions: 条件列表。
+        conditions: 条件列表（技术面 + 基本面混合）。
         period:     周期（daily/weekly/monthly）。
         logic:      'and'=全部满足，'or'=任一满足。
         exclude_st: 是否剔除 ST 股。
         min_bars:   K 线根数不足则跳过（指标不可靠）。
-    返回：命中股票 DataFrame（含代码、名称、命中条件、关键指标快照）。
+    返回：命中股票 DataFrame（含代码、名称、行业、命中条件、技术面 + 基本面快照）。
     """
     basic = db.load_stock_basic().set_index("code")
+    fundamentals = db.load_fundamentals()
     codes = db.all_codes_with_data(period)
     rows = []
     for code in codes:
@@ -36,12 +39,12 @@ def screen(conditions: Sequence[Condition], period: str = "daily",
         kl = db.load_kline(code, period)
         if len(kl) < min_bars:
             continue
-        enriched = add_indicators(kl)
-        matched = [c.name for c in conditions if c(enriched)]
+        ctx = Context(df=add_indicators(kl), fund=fundamentals.get(code, {}))
+        matched = [c.name for c in conditions if c(ctx)]
         hit = (len(matched) == len(conditions)) if logic == "and" else (len(matched) > 0)
         if not hit:
             continue
-        last = enriched.iloc[-1]
+        last = ctx.df.iloc[-1]
         rec = {
             "code": code,
             "name": basic.loc[code, "name"] if code in basic.index else "",
@@ -49,8 +52,11 @@ def screen(conditions: Sequence[Condition], period: str = "daily",
             "date": last["date"],
             "命中条件": "+".join(matched),
         }
-        for col in _SNAPSHOT:
+        for col in _TECH_SNAPSHOT:
             rec[col] = round(float(last[col]), 3) if pd.notna(last.get(col)) else None
+        for col in _FUND_SNAPSHOT:
+            v = ctx.fund.get(col)
+            rec[col] = round(float(v), 3) if v is not None and pd.notna(v) else None
         rows.append(rec)
 
     result = pd.DataFrame(rows)

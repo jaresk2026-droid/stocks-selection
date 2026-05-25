@@ -101,6 +101,98 @@ def fetch_kline(code: str, period: str = "daily", start_date: str | None = None,
     return _standardize_kline(df, code)
 
 
+# ---------------- 基本面 ----------------
+
+# stock_zh_a_spot_em 估值列 -> 内部列
+_VALUATION_RENAME = {
+    "代码": "code", "市盈率-动态": "pe", "市净率": "pb",
+    "总市值": "total_mv", "流通市值": "circ_mv",
+}
+
+# stock_yjbb_em 业绩报表列 -> 内部列
+_PERF_RENAME = {
+    "股票代码": "code", "每股收益": "eps", "每股净资产": "bps",
+    "净资产收益率": "roe", "营业总收入-营业总收入": "revenue",
+    "营业总收入-同比增长": "revenue_yoy", "净利润-净利润": "profit",
+    "净利润-同比增长": "profit_yoy", "销售毛利率": "gross_margin",
+    "所处行业": "industry",
+}
+
+
+def fetch_valuation() -> pd.DataFrame:
+    """全市场估值快照：code, pe, pb, total_mv, circ_mv（来自东方财富）。"""
+    spot = _retry(ak.stock_zh_a_spot_em)
+    cols = {k: v for k, v in _VALUATION_RENAME.items() if k in spot.columns}
+    df = spot.rename(columns=cols)[list(cols.values())].copy()
+    df["code"] = df["code"].astype(str).str.zfill(6)
+    for c in ["pe", "pb", "total_mv", "circ_mv"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
+def latest_report_dates(n: int = 4) -> list[str]:
+    """返回最近 n 个财报报告期（YYYYMMDD），由近及远。"""
+    today = pd.Timestamp.today()
+    ends = []
+    year = today.year
+    for y in (year, year - 1):
+        for md in ("1231", "0930", "0630", "0331"):
+            d = f"{y}{md}"
+            if d <= today.strftime("%Y%m%d"):
+                ends.append(d)
+    return sorted(set(ends), reverse=True)[:n]
+
+
+def fetch_performance(report_date: str | None = None) -> pd.DataFrame:
+    """全市场业绩报表（来自东方财富）。
+
+    report_date 为报告期 YYYYMMDD；缺省自动尝试最近几个报告期，取第一个有数据的。
+    返回列：code, eps, bps, roe, revenue, revenue_yoy, profit, profit_yoy,
+            gross_margin, industry, report_date
+    """
+    candidates = [report_date] if report_date else latest_report_dates()
+    for rd in candidates:
+        try:
+            df = _retry(ak.stock_yjbb_em, date=rd)
+        except Exception:  # noqa: BLE001 - 该报告期可能尚未发布，换下一个
+            continue
+        if df is None or df.empty:
+            continue
+        cols = {k: v for k, v in _PERF_RENAME.items() if k in df.columns}
+        out = df.rename(columns=cols)[list(cols.values())].copy()
+        out["code"] = out["code"].astype(str).str.zfill(6)
+        num = ["eps", "bps", "roe", "revenue", "revenue_yoy", "profit",
+               "profit_yoy", "gross_margin"]
+        for c in num:
+            if c in out.columns:
+                out[c] = pd.to_numeric(out[c], errors="coerce")
+        out["report_date"] = rd
+        return out
+    return pd.DataFrame()
+
+
+def fetch_fundamentals(report_date: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """合并估值 + 业绩为基本面表。
+
+    返回 (fundamentals_df, industry_df)：
+        fundamentals_df 含 db.FUNDAMENTAL_COLUMNS；
+        industry_df 含 code, industry（用于回填 stock_basic）。
+    """
+    perf = fetch_performance(report_date)
+    val = fetch_valuation()
+    if perf.empty:
+        merged = val.copy()
+        merged["report_date"] = None
+    else:
+        merged = perf.merge(val, on="code", how="outer")
+    industry_df = (perf[["code", "industry"]].copy()
+                   if "industry" in perf.columns else pd.DataFrame(columns=["code", "industry"]))
+    if "industry" in merged.columns:
+        merged = merged.drop(columns=["industry"])
+    return merged, industry_df
+
+
 def fetch_kline_min(code: str, period: str = "60", start_date: str | None = None,
                     end_date: str | None = None) -> pd.DataFrame:
     """获取单只股票的分钟 K 线（60/15/5，前复权）。

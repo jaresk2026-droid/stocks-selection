@@ -24,11 +24,16 @@ from stock_screener.engine import screen
 
 
 def build_conditions() -> list:
-    """在这里定义/修改你的选股条件。"""
+    """在这里定义/修改你的选股条件（技术面 + 基本面可混合）。"""
     return [
+        # 技术面
         C.macd_golden_cross(),
         C.volume_ratio_above(1.5),
         C.ma_bullish(),
+        # 基本面（需先运行 update_fundamentals.py；未拉基本面时这些条件恒为 False）
+        C.roe_above(10),
+        C.profit_yoy_above(20),
+        C.pe_below(50),
     ]
 
 
