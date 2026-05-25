@@ -1,0 +1,21 @@
+# 数据与产出（体积大 / 本地生成，不进 git）
+data/
+output/
+*.db
+*.sqlite
+*.parquet
+*.xlsx
+*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.ipynb_checkpoints/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store

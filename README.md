@@ -149,12 +149,59 @@ stocks-selection/
 
 ## 六、分阶段落地路线（MVP 先行）
 
-- **阶段 0 — 数据打通**：拉一只股票日线 → 存 SQLite → 能读出。验证最小链路与数据源可用。
-- **阶段 1 — MVP 选股**：全市场日线 + MACD/RSI/KDJ/量比 + 一个写死的简单策略 + 命令行输出 Excel。
+- [x] **阶段 0 — 数据打通**：建库 + 拉股票列表 + 历史日线 → 存 SQLite → 能读出。
+- [x] **阶段 1 — MVP 选股**：全市场日线 + MACD/RSI/KDJ/量比 + 内置策略 + 命令行输出 Excel。
   *此步即可真正用于选股。*
-- **阶段 2 — 配置化 + 界面**：条件改为 YAML/界面可配 + Streamlit 界面 + K 线图展示。
-- **阶段 3 — 多周期 + 板块**：周/月/分钟（60/15/5）线、多周期共振、行业板块过滤。
-- **阶段 4 — 进阶**：复杂形态识别、策略回测、定时自动更新。
+- [ ] **阶段 2 — 配置化 + 界面**：条件改为 YAML/界面可配 + Streamlit 界面 + K 线图展示。
+- [ ] **阶段 3 — 多周期 + 板块**：周/月/分钟（60/15/5）线、多周期共振、行业板块过滤。
+- [ ] **阶段 4 — 进阶**：复杂形态识别、策略回测、定时自动更新。
+
+---
+
+## 运行说明（阶段 0 / 1）
+
+### 1. 安装
+
+```bash
+python3 -m venv .venv                       # 建虚拟环境（避免依赖污染系统）
+.venv/bin/python -m pip install -U pip setuptools wheel
+.venv/bin/python -m pip install -r requirements.txt
+```
+
+> Windows 用 `.venv\Scripts\python.exe` 代替 `.venv/bin/python`。
+
+### 2. 拉取数据
+
+```bash
+# 先小范围验证（只拉前 20 只的日线，几十秒）
+.venv/bin/python scripts/init_data.py --limit 20 --periods daily
+
+# 确认无误后拉全市场日线（约 5000 只，需较长时间，可后台跑）
+.venv/bin/python scripts/init_data.py --periods daily
+```
+
+### 3. 选股
+
+```bash
+.venv/bin/python scripts/run_screen.py        # 用内置策略筛选，结果打印并导出 output/*.xlsx
+```
+
+内置策略在 `scripts/run_screen.py` 的 `build_conditions()` 里，改条件不用动其它代码。
+可用条件见 `stock_screener/engine/conditions.py`（MACD/KDJ 金叉、RSI 阈值、均线多头、量比、创新高、量价齐升等）。
+
+### 4. 每日更新
+
+```bash
+.venv/bin/python scripts/update_daily.py      # 收盘后增量追加最新 K 线（可重复跑）
+```
+
+可配合系统计划任务（Linux cron / Windows 任务计划）每天 18:00 自动执行。
+
+### ⚠️ 网络要求
+
+数据来自 akshare（东方财富/新浪等）和 baostock，需要能访问这些站点。
+**在出网受限的环境（如部分云端沙箱，会报 `Host not in allowlist` 或 JSON 解析错误）里拉不到数据**，
+请在本机或可正常访问这些站点的服务器上运行数据拉取脚本。代码逻辑本身已离线验证通过。
 
 ---
 
