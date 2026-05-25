@@ -14,6 +14,7 @@ import streamlit as st
 
 from stock_screener.engine import screen
 from stock_screener.engine import catalog
+from stock_screener.engine import conditions as C
 from stock_screener.storage import db
 from stock_screener.viz import build_kline_figure
 
@@ -56,6 +57,31 @@ def render_condition_picker() -> dict[str, dict]:
     return selection
 
 
+@st.cache_data(show_spinner=False)
+def sector_options() -> tuple[list[str], list[str]]:
+    """行业列表（stock_basic）与板块列表（stock_boards），供下拉。"""
+    try:
+        return db.list_industries(), db.list_boards()
+    except Exception:
+        return [], []
+
+
+def render_sector_picker() -> tuple[list[str], list[str]]:
+    """渲染行业 / 板块多选，返回 (选中的行业, 选中的板块)。"""
+    industries, boards = sector_options()
+    st.sidebar.markdown("**行业 / 板块**")
+    pick_ind, pick_board = [], []
+    if industries:
+        pick_ind = st.sidebar.multiselect("行业（来自财报分类）", industries,
+                                          help="需先运行 update_fundamentals.py 回填行业")
+    if boards:
+        pick_board = st.sidebar.multiselect("板块（行业+概念）", boards,
+                                            help="需先运行 update_sectors.py")
+    if not industries and not boards:
+        st.sidebar.caption("（运行 update_fundamentals / update_sectors 后可按行业/板块筛选）")
+    return pick_ind, pick_board
+
+
 def to_excel_bytes(df: pd.DataFrame) -> bytes:
     buf = io.BytesIO()
     df.to_excel(buf, index=False)
@@ -78,6 +104,8 @@ min_bars = st.sidebar.number_input("最少 K 线根数", value=60, min_value=10,
 st.sidebar.divider()
 st.sidebar.subheader("选股条件")
 selection = render_condition_picker()
+st.sidebar.divider()
+pick_industries, pick_boards = render_sector_picker()
 run = st.sidebar.button("开始选股", type="primary", use_container_width=True)
 
 # --- 数据状态提示 ---
@@ -96,13 +124,18 @@ else:
 # --- 执行选股 ---
 if run:
     conditions = catalog.build_conditions(selection)
+    if pick_industries:
+        conditions.append(C.industry_in(pick_industries))
+    if pick_boards:
+        conditions.append(C.board_in(pick_boards))
     if not conditions:
-        st.error("请至少勾选一个条件。")
+        st.error("请至少勾选一个条件（或选择行业/板块）。")
     else:
         names = f" {logic.upper()} ".join(c.name for c in conditions)
+        frames = catalog.needed_periods(selection)
         with st.spinner(f"正在按条件筛选：{names}"):
             result = screen(conditions, period=period, logic=logic,
-                            exclude_st=exclude_st, min_bars=int(min_bars))
+                            exclude_st=exclude_st, min_bars=int(min_bars), frames=frames)
         st.session_state["result"] = result
         st.session_state["cond_names"] = names
 

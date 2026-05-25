@@ -27,10 +27,11 @@ class ParamSpec:
 class ConditionSpec:
     key: str                          # 唯一标识
     label: str                        # 界面显示名
-    category: str                     # "技术面" / "基本面"
+    category: str                     # "技术面" / "基本面" / "多周期共振"
     builder: Callable[..., Condition] # (**params) -> Condition
     params: list[ParamSpec] = field(default_factory=list)
     help: str = ""
+    needs_periods: list[str] = field(default_factory=list)  # 需额外加载的周期
 
     def build(self, values: dict) -> Condition:
         kwargs = {p.key: (int(values[p.key]) if p.is_int else values[p.key])
@@ -98,6 +99,23 @@ CATALOG: list[ConditionSpec] = [
     ConditionSpec("profit_yoy_above", "净利同比高于", "基本面",
                   lambda threshold=20, **k: C.profit_yoy_above(threshold),
                   [ParamSpec("threshold", "净利同比(%) >", 20, -50, 300, 5)]),
+
+    # ---------------- 多周期共振 ----------------
+    ConditionSpec("weekly_macd_above_zero", "周线 MACD 零轴上方", "多周期共振",
+                  lambda **k: C.on_period("weekly", C.macd_above_zero()),
+                  needs_periods=["weekly"], help="周线 DIF>0，确认中期方向"),
+    ConditionSpec("weekly_ma_bullish", "周线 均线多头", "多周期共振",
+                  lambda **k: C.on_period("weekly", C.ma_bullish()),
+                  needs_periods=["weekly"]),
+    ConditionSpec("weekly_macd_golden_cross", "周线 MACD 金叉", "多周期共振",
+                  lambda **k: C.on_period("weekly", C.macd_golden_cross()),
+                  needs_periods=["weekly"]),
+    ConditionSpec("monthly_macd_above_zero", "月线 MACD 零轴上方", "多周期共振",
+                  lambda **k: C.on_period("monthly", C.macd_above_zero()),
+                  needs_periods=["monthly"]),
+    ConditionSpec("monthly_ma_bullish", "月线 均线多头", "多周期共振",
+                  lambda **k: C.on_period("monthly", C.ma_bullish()),
+                  needs_periods=["monthly"]),
 ]
 
 CATALOG_BY_KEY = {spec.key: spec for spec in CATALOG}
@@ -123,3 +141,15 @@ def build_conditions(selection: dict[str, dict]) -> list[Condition]:
         if spec is not None:
             out.append(spec.build(values or {}))
     return out
+
+
+def needed_periods(selection: dict[str, dict]) -> list[str]:
+    """根据选择，汇总需要额外加载的周期（供 screen(frames=...)）。"""
+    periods: list[str] = []
+    for key in selection:
+        spec = CATALOG_BY_KEY.get(key)
+        if spec:
+            for p in spec.needs_periods:
+                if p not in periods:
+                    periods.append(p)
+    return periods

@@ -18,20 +18,24 @@ _FUND_SNAPSHOT = ["pe", "pb", "roe", "revenue_yoy", "profit_yoy", "gross_margin"
 
 def screen(conditions: Sequence[Condition], period: str = "daily",
            logic: str = "and", exclude_st: bool = True,
-           min_bars: int = 60) -> pd.DataFrame:
+           min_bars: int = 60, frames: Sequence[str] | None = None) -> pd.DataFrame:
     """对全市场执行选股。
 
     参数：
-        conditions: 条件列表（技术面 + 基本面混合）。
-        period:     周期（daily/weekly/monthly）。
+        conditions: 条件列表（技术面 / 基本面 / 多周期 / 板块 混合）。
+        period:     主周期（daily/weekly/monthly）。
         logic:      'and'=全部满足，'or'=任一满足。
         exclude_st: 是否剔除 ST 股。
-        min_bars:   K 线根数不足则跳过（指标不可靠）。
+        min_bars:   主周期 K 线根数不足则跳过（指标不可靠）。
+        frames:     额外加载的周期（用于多周期共振，如 ['weekly','monthly']）。
     返回：命中股票 DataFrame（含代码、名称、行业、命中条件、技术面 + 基本面快照）。
     """
     basic = db.load_stock_basic().set_index("code")
     fundamentals = db.load_fundamentals()
+    board_map = db.load_board_members()
+    extra = [p for p in (frames or []) if p != period]
     codes = db.all_codes_with_data(period)
+
     rows = []
     for code in codes:
         if exclude_st and code in basic.index and basic.loc[code, "is_st"] == 1:
@@ -39,16 +43,28 @@ def screen(conditions: Sequence[Condition], period: str = "daily",
         kl = db.load_kline(code, period)
         if len(kl) < min_bars:
             continue
-        ctx = Context(df=add_indicators(kl), fund=fundamentals.get(code, {}))
+
+        frame_map = {period: add_indicators(kl)}
+        for p in extra:
+            sub = db.load_kline(code, p)
+            if not sub.empty:
+                frame_map[p] = add_indicators(sub)
+
+        industry = basic.loc[code, "industry"] if code in basic.index else None
+        ctx = Context(df=frame_map[period], fund=fundamentals.get(code, {}),
+                      frames=frame_map, industry=industry,
+                      boards=board_map.get(code, frozenset()))
+
         matched = [c.name for c in conditions if c(ctx)]
         hit = (len(matched) == len(conditions)) if logic == "and" else (len(matched) > 0)
         if not hit:
             continue
+
         last = ctx.df.iloc[-1]
         rec = {
             "code": code,
             "name": basic.loc[code, "name"] if code in basic.index else "",
-            "industry": basic.loc[code, "industry"] if code in basic.index else "",
+            "industry": industry,
             "date": last["date"],
             "命中条件": "+".join(matched),
         }

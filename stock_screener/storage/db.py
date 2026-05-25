@@ -51,6 +51,17 @@ def init_db() -> None:
         )
         cur.execute(
             """
+            CREATE TABLE IF NOT EXISTS stock_boards (
+                code        TEXT NOT NULL,        -- 6 位代码
+                board_name  TEXT NOT NULL,        -- 板块名称
+                board_type  TEXT NOT NULL,        -- 'industry' 行业 / 'concept' 概念
+                PRIMARY KEY (code, board_name)
+            )
+            """
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_boards_name ON stock_boards(board_name)")
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS fundamentals (
                 code         TEXT PRIMARY KEY,   -- 6 位代码
                 report_date  TEXT,               -- 财报报告期 YYYYMMDD
@@ -173,6 +184,60 @@ def load_fundamentals() -> dict[str, dict]:
     if df.empty:
         return {}
     return {row["code"]: row.to_dict() for _, row in df.iterrows()}
+
+
+# ---------------- 行业 / 概念板块 ----------------
+
+def save_boards(df: pd.DataFrame, board_type: str, replace_type: bool = True) -> int:
+    """写入板块成分。df 需含 code, board_name。board_type 为 industry/concept。
+
+    replace_type=True 时先清空该类型旧数据，保证成分变动能反映。
+    """
+    df = df.dropna(subset=["code", "board_name"]).copy()
+    df["code"] = df["code"].astype(str).str.zfill(6)
+    df["board_type"] = board_type
+    if df.empty:
+        return 0
+    rows = [(r.code, r.board_name, r.board_type)
+            for r in df[["code", "board_name", "board_type"]].itertuples(index=False)]
+    with connect() as conn:
+        if replace_type:
+            conn.execute("DELETE FROM stock_boards WHERE board_type=?", (board_type,))
+        conn.executemany(
+            "INSERT OR REPLACE INTO stock_boards (code, board_name, board_type) VALUES (?,?,?)",
+            rows,
+        )
+    return len(rows)
+
+
+def load_board_members() -> dict[str, frozenset]:
+    """返回 {code: frozenset(板块名)}，供选股引擎查个股所属板块。"""
+    with connect() as conn:
+        df = pd.read_sql("SELECT code, board_name FROM stock_boards", conn)
+    if df.empty:
+        return {}
+    return {code: frozenset(g["board_name"]) for code, g in df.groupby("code")}
+
+
+def list_boards(board_type: str | None = None) -> list[str]:
+    """返回板块名称列表（供界面下拉），可按类型过滤。"""
+    sql = "SELECT DISTINCT board_name FROM stock_boards"
+    params: tuple = ()
+    if board_type:
+        sql += " WHERE board_type=?"
+        params = (board_type,)
+    sql += " ORDER BY board_name"
+    with connect() as conn:
+        return [r[0] for r in conn.execute(sql, params).fetchall()]
+
+
+def list_industries() -> list[str]:
+    """返回 stock_basic 中出现过的行业列表（供界面下拉）。"""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT industry FROM stock_basic WHERE industry IS NOT NULL AND industry<>'' ORDER BY industry"
+        ).fetchall()
+    return [r[0] for r in rows]
 
 
 # ---------------- K 线 ----------------

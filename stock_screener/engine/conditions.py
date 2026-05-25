@@ -17,11 +17,17 @@ import pandas as pd
 
 @dataclass
 class Context:
-    df: pd.DataFrame                      # K 线 + 指标
-    fund: dict = field(default_factory=dict)  # 基本面字段
+    df: pd.DataFrame                              # 主周期 K 线 + 指标
+    fund: dict = field(default_factory=dict)      # 基本面字段
+    frames: dict = field(default_factory=dict)    # period -> 已加指标的 K 线（多周期共振用）
+    industry: str | None = None                   # 所属行业（stock_basic）
+    boards: frozenset = frozenset()               # 所属行业/概念板块集合
 
 
 Predicate = Callable[[Context], bool]
+
+
+PERIOD_LABEL = {"daily": "日线", "weekly": "周线", "monthly": "月线"}
 
 
 @dataclass
@@ -210,3 +216,39 @@ def profit_yoy_above(threshold: float = 20) -> Condition:
         v = _fund(ctx, "profit_yoy")
         return v is not None and v > threshold
     return Condition(f"净利同比>{threshold:g}%", p)
+
+
+# ==================== 多周期共振 ====================
+
+def on_period(period: str, cond: Condition) -> Condition:
+    """把一个（技术面）条件改到另一个周期上评估，用于多周期共振。
+
+    例：on_period("weekly", macd_above_zero()) 表示「周线 MACD 在零轴上方」。
+    依赖 ctx.frames 里有该周期的数据；没有则判 False。
+    """
+    label = PERIOD_LABEL.get(period, period)
+
+    def p(ctx: Context) -> bool:
+        sub_df = ctx.frames.get(period)
+        if sub_df is None or len(sub_df) == 0:
+            return False
+        sub = Context(df=sub_df, fund=ctx.fund, frames=ctx.frames,
+                      industry=ctx.industry, boards=ctx.boards)
+        return cond(sub)
+    return Condition(f"{label}·{cond.name}", p)
+
+
+# ==================== 行业 / 板块 ====================
+
+def industry_in(names) -> Condition:
+    """属于指定行业之一（来自 stock_basic.industry）。"""
+    nameset = frozenset(names)
+    label = "行业∈{%s}" % ",".join(list(nameset)[:3]) + ("…" if len(nameset) > 3 else "")
+    return Condition(label, lambda ctx: ctx.industry in nameset)
+
+
+def board_in(names) -> Condition:
+    """属于指定行业/概念板块之一（来自 stock_boards）。"""
+    nameset = frozenset(names)
+    label = "板块∈{%s}" % ",".join(list(nameset)[:3]) + ("…" if len(nameset) > 3 else "")
+    return Condition(label, lambda ctx: bool(ctx.boards & nameset))
