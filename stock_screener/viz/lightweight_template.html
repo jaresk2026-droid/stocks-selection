@@ -44,6 +44,12 @@ function addLine(chart, item) {
   series.setData(item.data);
   return series;
 }
+function appendText(parent, tag, text, color) {
+  const node = document.createElement(tag);
+  node.textContent = text;
+  if (color) node.style.color = color;
+  parent.appendChild(node);
+}
 try {
   const main = LightweightCharts.createChart(document.getElementById('main-chart'),createOptions(PAYLOAD.oscillators.length === 0));
   const candles = main.addCandlestickSeries({upColor:UP,downColor:DOWN,wickUpColor:UP,wickDownColor:DOWN,borderUpColor:UP,borderDownColor:DOWN});
@@ -52,7 +58,14 @@ try {
   volume.setData(PAYLOAD.volume);
   main.priceScale('volume').applyOptions({scaleMargins:{top:.78,bottom:0}});
   const overlaySeries = PAYLOAD.overlays.map(item => ({item,series:addLine(main,item)}));
-  document.getElementById('legend').innerHTML = PAYLOAD.overlays.map(item => '<span style="margin-left:8px;color:'+item.color+'">'+item.label+'</span>').join('');
+  const legend = document.getElementById('legend');
+  PAYLOAD.overlays.forEach(item => {
+    const span = document.createElement('span');
+    span.style.marginLeft = '8px';
+    span.style.color = item.color;
+    span.textContent = item.label;
+    legend.appendChild(span);
+  });
   const oscCharts = PAYLOAD.oscillators.map((osc,index) => {
     const chart = LightweightCharts.createChart(document.getElementById('oscillator-'+index),createOptions(index === PAYLOAD.oscillators.length - 1));
     const series = osc.series.map(item => {
@@ -82,13 +95,16 @@ try {
     }
     const value = param.seriesData.get(candles);
     if (!value) return;
-    const pct = (value.close - previous[param.time]) / previous[param.time] * 100;
-    const extra = overlaySeries.map(({item,series}) => {
-      const point = param.seriesData.get(series);
-      return point ? '<div style="color:'+item.color+'">'+item.label+' '+point.value.toFixed(2)+'</div>' : '';
-    }).join('');
+    const previousClose = previous[param.time];
+    const pct = previousClose ? (value.close - previousClose) / previousClose * 100 : 0.0;
     const tooltip = document.getElementById('tooltip');
-    tooltip.innerHTML = '<div>'+param.time+'</div><b>开 '+value.open.toFixed(2)+' 高 '+value.high.toFixed(2)+' 低 '+value.low.toFixed(2)+' 收 '+value.close.toFixed(2)+' ('+(pct >= 0 ? '+' : '')+pct.toFixed(2)+'%)</b>'+extra;
+    tooltip.replaceChildren();
+    appendText(tooltip,'div',param.time);
+    appendText(tooltip,'b','开 '+value.open.toFixed(2)+' 高 '+value.high.toFixed(2)+' 低 '+value.low.toFixed(2)+' 收 '+value.close.toFixed(2)+' ('+(pct >= 0 ? '+' : '')+pct.toFixed(2)+'%)');
+    overlaySeries.forEach(({item,series}) => {
+      const point = param.seriesData.get(series);
+      if (point) appendText(tooltip,'div',item.label+' '+point.value.toFixed(2),item.color);
+    });
     tooltip.style.display = 'block';
     oscCharts.forEach(item => item.series[0] && item.chart.setCrosshairPosition(NaN,param.time,item.series[0]));
   });

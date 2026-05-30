@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import math
 from pathlib import Path
@@ -195,14 +196,22 @@ def render_chart_html(payload: dict, runtime_js: str | None = None, runtime_path
             runtime_js = Path(runtime_path).read_text(encoding="utf-8")
         except FileNotFoundError as exc:
             raise FileNotFoundError(f"lightweight-charts runtime not found: {runtime_path}") from exc
+    payload_json = (
+        json.dumps(payload, ensure_ascii=False, allow_nan=False)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
     sections = "".join(
-        f'<div class="oscillator"><div class="oscillator-title">{item["title"]}</div>'
+        f'<div class="oscillator"><div class="oscillator-title">{html.escape(item["title"], quote=True)}</div>'
         f'<div class="oscillator-chart" id="oscillator-{index}"></div></div>'
         for index, item in enumerate(payload["oscillators"])
     )
     return (
         TEMPLATE_PATH.read_text(encoding="utf-8")
-        .replace("__RUNTIME_JS__", runtime_js)
-        .replace("__PAYLOAD_JSON__", json.dumps(payload, ensure_ascii=False))
-        .replace("__OSCILLATOR_SECTIONS__", sections)
+        .replace("__RUNTIME_JS__", runtime_js, 1)
+        .replace("__OSCILLATOR_SECTIONS__", sections, 1)
+        .replace("__PAYLOAD_JSON__", payload_json, 1)
     )

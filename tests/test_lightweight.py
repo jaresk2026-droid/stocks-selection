@@ -7,6 +7,7 @@ import pandas as pd
 
 from stock_screener.indicators import add_indicators
 from stock_screener.viz.lightweight import (
+    TEMPLATE_PATH,
     _line_data,
     build_chart_payload,
     latest_quote,
@@ -158,6 +159,51 @@ class LightweightChartModelTests(unittest.TestCase):
 
         with self.assertRaisesRegex(FileNotFoundError, "lightweight-charts"):
             render_chart_html(payload, runtime_path="missing.js")
+
+    def test_render_chart_html_script_escapes_payload_and_html_escapes_oscillator_titles(self):
+        attacker = "</script><script>window.bad=1</script>"
+        payload = {
+            "candles": [],
+            "volume": [],
+            "overlays": [],
+            "oscillators": [{"title": attacker + "\"'&", "series": []}],
+            "height": 650,
+            "marker": ">&\u2028\u2029",
+        }
+
+        html = render_chart_html(payload, runtime_js="window.LightweightCharts = {};")
+
+        self.assertNotIn(attacker, html)
+        self.assertIn("\\u003c/script\\u003e\\u003cscript\\u003ewindow.bad=1\\u003c/script\\u003e", html)
+        self.assertIn("&lt;/script&gt;&lt;script&gt;window.bad=1&lt;/script&gt;&quot;&#x27;&amp;", html)
+        self.assertIn('"marker": "\\u003e\\u0026\\u2028\\u2029"', html)
+
+    def test_render_chart_html_rejects_nan_payload_values(self):
+        payload = {"candles": [], "volume": [], "overlays": [], "oscillators": [], "height": float("nan")}
+
+        with self.assertRaises(ValueError):
+            render_chart_html(payload, runtime_js="window.LightweightCharts = {};")
+
+    def test_render_chart_html_preserves_placeholder_text_inside_payload_json(self):
+        payload = {
+            "candles": [],
+            "volume": [],
+            "overlays": [],
+            "oscillators": [],
+            "height": 500,
+            "marker": "__OSCILLATOR_SECTIONS__",
+        }
+
+        html = render_chart_html(payload, runtime_js="window.LightweightCharts = {};")
+
+        self.assertIn('"marker": "__OSCILLATOR_SECTIONS__"', html)
+
+    def test_template_uses_safe_dom_text_and_guards_zero_previous_close(self):
+        template = TEMPLATE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("const previousClose = previous[param.time];", template)
+        self.assertIn("const pct = previousClose ? (value.close - previousClose) / previousClose * 100 : 0.0;", template)
+        self.assertNotIn(".innerHTML", template)
 
     def _assert_finite_numbers(self, value):
         if isinstance(value, dict):
