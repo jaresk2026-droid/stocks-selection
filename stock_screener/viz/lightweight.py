@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import math
+import re
 from pathlib import Path
 from typing import Iterable
 
@@ -209,9 +210,13 @@ def render_chart_html(payload: dict, runtime_js: str | None = None, runtime_path
         f'<div class="oscillator-chart" id="oscillator-{index}"></div></div>'
         for index, item in enumerate(payload["oscillators"])
     )
-    return (
-        TEMPLATE_PATH.read_text(encoding="utf-8")
-        .replace("__RUNTIME_JS__", runtime_js, 1)
-        .replace("__OSCILLATOR_SECTIONS__", sections, 1)
-        .replace("__PAYLOAD_JSON__", payload_json, 1)
+    replacements = {
+        "__RUNTIME_JS__": runtime_js,
+        "__PAYLOAD_JSON__": payload_json,
+        "__OSCILLATOR_SECTIONS__": sections,
+    }
+    return re.sub(
+        r"__RUNTIME_JS__|__PAYLOAD_JSON__|__OSCILLATOR_SECTIONS__",
+        lambda match: replacements[match.group(0)],
+        TEMPLATE_PATH.read_text(encoding="utf-8"),
     )

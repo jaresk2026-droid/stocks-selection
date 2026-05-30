@@ -198,6 +198,21 @@ class LightweightChartModelTests(unittest.TestCase):
 
         self.assertIn('"marker": "__OSCILLATOR_SECTIONS__"', html)
 
+    def test_render_chart_html_preserves_payload_placeholder_text_inside_oscillator_title(self):
+        payload = {
+            "candles": [],
+            "volume": [],
+            "overlays": [],
+            "oscillators": [{"title": "__PAYLOAD_JSON__", "series": []}],
+            "height": 650,
+        }
+
+        html = render_chart_html(payload, runtime_js="window.LightweightCharts = {};")
+
+        self.assertIn('<div class="oscillator-title">__PAYLOAD_JSON__</div>', html)
+        self.assertIn("const PAYLOAD = {", html)
+        self.assertNotIn("const PAYLOAD = __PAYLOAD_JSON__;", html)
+
     def test_template_uses_safe_dom_text_and_guards_zero_previous_close(self):
         template = TEMPLATE_PATH.read_text(encoding="utf-8")
 
