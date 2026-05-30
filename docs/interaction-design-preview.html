@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>A 股多条件选股 - 交互融合方案</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #eef2f7;
+      color: #1f2937;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+        "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    }
+    .page { max-width: 1380px; margin: 0 auto; padding: 24px; }
+    .intro { margin-bottom: 16px; }
+    h1 { margin: 0 0 8px; font-size: 24px; }
+    .subtitle { margin: 0; color: #64748b; font-size: 14px; line-height: 1.7; }
+    .app {
+      display: grid;
+      grid-template-columns: 250px minmax(0, 1fr);
+      overflow: hidden;
+      min-height: 820px;
+      background: white;
+      border: 1px solid #dfe5ec;
+      border-radius: 12px;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, .08);
+    }
+    .sidebar { padding: 18px 15px; background: #f5f5f5; border-right: 1px solid #e5e7eb; }
+    .brand { font-size: 18px; font-weight: 750; }
+    .muted { color: #8c8c8c; font-size: 12px; line-height: 1.65; }
+    .section-title {
+      margin: 18px 0 8px;
+      color: #8c8c8c;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .control {
+      margin-bottom: 8px;
+      padding: 9px 10px;
+      background: white;
+      border: 1px solid #dfe5ec;
+      border-radius: 6px;
+      color: #475569;
+      font-size: 12px;
+    }
+    .checks { color: #475569; font-size: 12px; line-height: 2.1; }
+    .primary {
+      width: 100%;
+      margin-top: 6px;
+      padding: 10px;
+      border: 0;
+      border-radius: 6px;
+      background: #1677ff;
+      color: white;
+      font-weight: 700;
+    }
+    .main { padding: 22px; background: #fbfcfe; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+    .title { font-size: 23px; font-weight: 760; }
+    .links { color: #1677ff; font-size: 12px; }
+    .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 16px 0; }
+    .metric {
+      padding: 12px;
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-top: 3px solid var(--accent);
+      border-radius: 8px;
+    }
+    .metric b { display: block; margin-top: 4px; color: var(--accent); font-size: 22px; }
+    .table, .detail { background: white; border: 1px solid #e5e7eb; border-radius: 8px; }
+    .table { padding: 10px 12px; }
+    .table-row {
+      display: grid;
+      grid-template-columns: 90px minmax(120px, 1fr) 120px 100px 120px;
+      padding: 9px 0;
+      border-bottom: 1px solid #f1f5f9;
+      color: #374151;
+      font-size: 13px;
+    }
+    .table-row:last-child { border-bottom: 0; }
+    .table-head { padding-top: 0; color: #8c8c8c; font-size: 12px; }
+    .up { color: #e3494f; }
+    .down { color: #22a76b; }
+    .link { color: #1677ff; }
+    .detail { margin-top: 18px; padding: 15px; }
+    .quote { margin-top: 5px; font-size: 12px; }
+    .chips { color: #475569; font-size: 12px; }
+    .active { color: #1677ff; font-weight: 750; }
+    .tip { margin: 12px 0 7px; color: #8c8c8c; font-size: 11px; }
+    .chart {
+      position: relative;
+      height: 230px;
+      overflow: hidden;
+      border: 1px solid #edf2f7;
+      background:
+        linear-gradient(#eef2f7 1px, transparent 1px) 0 0 / 100% 46px,
+        linear-gradient(90deg, #f1f5f9 1px, transparent 1px) 0 0 / 80px 100%,
+        linear-gradient(180deg, #fff, #fbfdff);
+    }
+    .chart svg { width: 100%; height: 100%; }
+    .chart-label { position: absolute; top: 8px; left: 10px; color: #64748b; font-size: 11px; }
+    .volume {
+      display: flex;
+      align-items: end;
+      height: 62px;
+      gap: 3px;
+      margin-top: 10px;
+      padding: 7px 9px 0;
+      border: 1px solid #edf2f7;
+      background: #fbfdff;
+    }
+    .volume i { display: block; flex: 1; height: var(--h); background: var(--c); opacity: .52; }
+    .indicator-line { margin: 12px 0 7px; color: #475569; font-size: 12px; }
+    .oscillator {
+      height: 82px;
+      padding: 8px;
+      border: 1px solid #edf2f7;
+      background: #fbfdff;
+      color: #8c8c8c;
+      font-size: 11px;
+    }
+    .note {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border-left: 4px solid #1677ff;
+      background: #f0f5ff;
+      color: #475569;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+    @media (max-width: 760px) {
+      .page { padding: 10px; }
+      h1 { font-size: 18px; }
+      .app { grid-template-columns: 1fr; }
+      .sidebar { border-right: 0; border-bottom: 1px solid #e5e7eb; }
+      .main { padding: 14px; }
+      .summary { grid-template-columns: 1fr; }
+      .table { overflow-x: auto; }
+      .table-row { min-width: 640px; }
+      .chart { height: 185px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="intro">
+      <h1>A 股多条件选股：交互融合方案</h1>
+      <p class="subtitle">
+        推荐结构：侧栏负责全市场筛选，主区保留结果上下文。选中股票后在下方展开
+        lightweight-charts 图表详情。此页面是设计草图，不包含登录、注册或付费相关设计。
+      </p>
+    </section>
+
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">📊 A 股多条件选股</div>
+        <div class="muted">本地行情数据库 · 收盘后更新</div>
+
+        <div class="section-title">筛选范围</div>
+        <div class="control">周期：日线</div>
+        <div class="control">组合逻辑：全部满足 AND</div>
+        <div class="control">最低 K 线根数：60</div>
+
+        <div class="section-title">选股条件</div>
+        <div class="checks">
+          ☑ MACD 金叉<br>
+          ☑ RSI 低于阈值<br>
+          ☐ 均线多头排列<br>
+          ☐ 放量上涨<br>
+          ☐ 周线 MACD 零轴上方
+        </div>
+
+        <div class="section-title">行业 / 板块</div>
+        <div class="control">选择行业、概念板块</div>
+        <button class="primary">开始选股</button>
+
+        <div class="section-title">帮助</div>
+        <div class="muted">❓ 指标和筛选规则说明<br>⚠ 数据状态与缺失提示</div>
+      </aside>
+
+      <main class="main">
+        <div class="row">
+          <div>
+            <div class="title">选股结果</div>
+            <div class="muted">命中 18 只 · 日线 · MACD 金叉 AND RSI &lt; 35</div>
+          </div>
+          <div class="links">下载 CSV　下载 Excel</div>
+        </div>
+
+        <div class="summary">
+          <div class="metric" style="--accent:#1677ff"><span class="muted">命中股票</span><b>18</b></div>
+          <div class="metric" style="--accent:#52c41a"><span class="muted">筛选周期</span><b>日线</b></div>
+          <div class="metric" style="--accent:#fa8c16"><span class="muted">已选条件</span><b>2</b></div>
+        </div>
+
+        <section class="table">
+          <div class="table-row table-head">
+            <span>代码</span><span>名称</span><span>行业</span><span>最新价</span><span>操作</span>
+          </div>
+          <div class="table-row">
+            <span>600519</span><b>贵州茅台</b><span>白酒</span><span class="up">+1.26%</span><span class="link">已展开详情</span>
+          </div>
+          <div class="table-row">
+            <span>000858</span><b>五粮液</b><span>白酒</span><span class="down">-0.38%</span><span class="link">查看图表</span>
+          </div>
+          <div class="table-row">
+            <span>600809</span><b>山西汾酒</b><span>白酒</span><span class="up">+0.72%</span><span class="link">查看图表</span>
+          </div>
+        </section>
+
+        <section class="detail">
+          <div class="row">
+            <div>
+              <b>贵州茅台 <span class="muted">600519</span></b>
+              <div class="quote up">1,568.20　+19.50 (+1.26%)　开 1,550.00　高 1,575.00　低 1,542.00</div>
+            </div>
+            <div class="chips">
+              周期： <span class="active">日</span>　周　月　　
+              范围： 3 月　半年　<span class="active">1 年</span>　2 年
+            </div>
+          </div>
+          <div class="tip">拖动平移 · 滚轮或双指缩放 · 十字光标查看 OHLC</div>
+
+          <div class="chart">
+            <div class="chart-label">K 线主图 · MA5 · MA10 · MA20 · MA60</div>
+            <svg viewBox="0 0 900 230" preserveAspectRatio="none" aria-label="K 线主图草图">
+              <polyline points="0,178 50,162 100,180 150,145 200,136 250,111 300,122 350,92 400,101 450,67 500,81 550,55 600,71 650,48 700,41 750,64 800,43 850,29 900,36"
+                fill="none" stroke="#1677ff" stroke-width="3"/>
+              <polyline points="0,188 50,179 100,171 150,158 200,146 250,132 300,121 350,112 400,99 450,88 500,78 550,71 600,65 650,57 700,53 750,52 800,48 850,44 900,42"
+                fill="none" stroke="#f5a623" stroke-width="2"/>
+            </svg>
+          </div>
+
+          <div class="volume" aria-label="成交量草图">
+            <i style="--h:30%;--c:#e3494f"></i><i style="--h:42%;--c:#22a76b"></i><i style="--h:55%;--c:#e3494f"></i>
+            <i style="--h:35%;--c:#22a76b"></i><i style="--h:60%;--c:#e3494f"></i><i style="--h:74%;--c:#e3494f"></i>
+            <i style="--h:45%;--c:#22a76b"></i><i style="--h:68%;--c:#e3494f"></i><i style="--h:52%;--c:#22a76b"></i>
+            <i style="--h:84%;--c:#e3494f"></i><i style="--h:47%;--c:#22a76b"></i><i style="--h:70%;--c:#e3494f"></i>
+            <i style="--h:58%;--c:#22a76b"></i><i style="--h:90%;--c:#e3494f"></i><i style="--h:64%;--c:#e3494f"></i>
+            <i style="--h:48%;--c:#22a76b"></i><i style="--h:78%;--c:#e3494f"></i><i style="--h:56%;--c:#22a76b"></i>
+          </div>
+
+          <div class="indicator-line">
+            固定：成交量　　副图：
+            <span class="active">☑ RSI</span>　☐ MACD　☐ KDJ　
+            <span class="muted">根据已选 RSI 条件自动推荐</span>
+          </div>
+          <div class="oscillator">RSI 副图区域 · 可继续勾选 MACD 或 KDJ 展开更多副图</div>
+        </section>
+
+        <div class="note">
+          侧栏变更只影响下一次全市场筛选。详情中的日线、周线、月线和区间切换只更新当前个股图表，
+          不重新扫描全市场。成交量固定展示；副图根据筛选条件智能推荐，并允许多选 MACD、RSI、KDJ。
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>
