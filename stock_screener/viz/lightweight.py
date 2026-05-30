@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Iterable
 
@@ -24,11 +25,13 @@ MA_SPECS = (
     ("MA20", "#9b59b6"),
     ("MA60", "#7f8c8d"),
 )
+_REQUIRED_MARKET_COLUMNS = ("date", "open", "high", "low", "close", "volume")
+_NUMERIC_MARKET_COLUMNS = ("open", "high", "low", "close", "volume")
 
 
 def range_presets(period: str) -> list[tuple[str, int]]:
     try:
-        return RANGE_PRESETS[period]
+        return list(RANGE_PRESETS[period])
     except KeyError as exc:
         raise ValueError(f"Unknown period {period!r}") from exc
 
@@ -53,19 +56,42 @@ def _time_text(value) -> str:
     return pd.Timestamp(value).strftime("%Y-%m-%d")
 
 
+def _finite_float(value) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _line_data(df: pd.DataFrame, column: str) -> list[dict]:
-    return [
-        {"time": _time_text(row.date), "value": float(getattr(row, column))}
-        for row in df.itertuples(index=False)
-        if pd.notna(getattr(row, column))
-    ]
+    points = []
+    for row in df.itertuples(index=False):
+        value = _finite_float(getattr(row, column))
+        if value is not None:
+            points.append({"time": _time_text(row.date), "value": value})
+    return points
+
+
+def _sanitize_market_data(raw_df: pd.DataFrame) -> pd.DataFrame:
+    missing = [column for column in _REQUIRED_MARKET_COLUMNS if column not in raw_df.columns]
+    if missing:
+        raise ValueError(f"K-line data is missing required columns: {', '.join(missing)}")
+    df = raw_df.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    for column in _NUMERIC_MARKET_COLUMNS:
+        values = pd.to_numeric(df[column], errors="coerce")
+        df[column] = values.where(values.map(lambda value: pd.notna(value) and math.isfinite(float(value))))
+    df = df.dropna(subset=_REQUIRED_MARKET_COLUMNS).sort_values("date").reset_index(drop=True)
+    if df.empty:
+        raise ValueError("No valid K-line rows remain")
+    return df
 
 
 def latest_quote(raw_df: pd.DataFrame) -> dict:
-    if raw_df.empty:
-        raise ValueError("K-line data is empty")
-    latest = raw_df.iloc[-1]
-    previous_close = float(raw_df.iloc[-2]["close"]) if len(raw_df) > 1 else float(latest["open"])
+    df = _sanitize_market_data(raw_df)
+    latest = df.iloc[-1]
+    previous_close = float(df.iloc[-2]["close"]) if len(df) > 1 else float(latest["open"])
     close = float(latest["close"])
     change = close - previous_close
     pct = change / previous_close * 100 if previous_close else 0.0
@@ -81,13 +107,14 @@ def latest_quote(raw_df: pd.DataFrame) -> dict:
     }
 
 
-def build_chart_payload(raw_df: pd.DataFrame, indicators: Iterable[str]) -> dict:
-    if raw_df.empty:
-        raise ValueError("K-line data is empty")
-    df = add_indicators(raw_df.copy()).reset_index(drop=True)
+def build_chart_payload(raw_df: pd.DataFrame, indicators: Iterable[str], bars: int | None = None) -> dict:
+    df = add_indicators(_sanitize_market_data(raw_df))
+    df["PREV_CLOSE"] = df["close"].shift(1).fillna(df["open"])
+    if bars is not None:
+        df = df.tail(bars).reset_index(drop=True)
     selected = normalize_indicators(indicators)
     candles = []
-    for index, row in df.iterrows():
+    for _, row in df.iterrows():
         candles.append(
             {
                 "time": _time_text(row["date"]),
@@ -95,7 +122,7 @@ def build_chart_payload(raw_df: pd.DataFrame, indicators: Iterable[str]) -> dict
                 "high": float(row["high"]),
                 "low": float(row["low"]),
                 "close": float(row["close"]),
-                "prevClose": float(df.iloc[index - 1]["close"]) if index else float(row["open"]),
+                "prevClose": float(row["PREV_CLOSE"]),
             }
         )
     volume = [

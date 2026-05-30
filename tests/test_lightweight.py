@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import math
 import unittest
 
 import pandas as pd
 
+from stock_screener.indicators import add_indicators
 from stock_screener.viz.lightweight import (
+    _line_data,
     build_chart_payload,
     latest_quote,
     range_presets,
@@ -40,6 +43,12 @@ class LightweightChartModelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             range_presets("minute")
 
+    def test_range_presets_returns_a_fresh_list(self):
+        presets = range_presets("daily")
+        presets.append(("mutated", 1))
+
+        self.assertNotIn(("mutated", 1), range_presets("daily"))
+
     def test_payload_contains_candles_volume_overlays_and_multiple_oscillators(self):
         payload = build_chart_payload(self.df, ["RSI", "MACD", "KDJ"])
         self.assertEqual(payload["candles"][1]["prevClose"], 10.5)
@@ -53,3 +62,88 @@ class LightweightChartModelTests(unittest.TestCase):
         self.assertEqual(quote["date"], "2026-05-29")
         self.assertAlmostEqual(quote["change"], 0.5)
         self.assertAlmostEqual(quote["pct"], 0.5 / 11.5 * 100)
+
+    def test_payload_trims_after_computing_indicators_on_full_history(self):
+        long_df = pd.DataFrame(
+            [
+                {
+                    "code": "600519",
+                    "date": date,
+                    "open": close - 0.2,
+                    "high": close + 0.5,
+                    "low": close - 0.5,
+                    "close": close,
+                    "volume": 100.0 + index,
+                    "amount": 1000.0 + index,
+                }
+                for index, date in enumerate(pd.date_range("2026-04-01", periods=30))
+                for close in [10.0 + index * 0.4]
+            ]
+        )
+        expected = float(add_indicators(long_df).tail(3).iloc[0]["MACD_DIF"])
+        cold_start = float(add_indicators(long_df.tail(3)).iloc[0]["MACD_DIF"])
+
+        payload = build_chart_payload(long_df, ["MACD"], bars=3)
+        visible_dif = payload["oscillators"][0]["series"][0]["data"][0]["value"]
+
+        self.assertEqual(len(payload["candles"]), 3)
+        self.assertNotAlmostEqual(expected, cold_start)
+        self.assertAlmostEqual(visible_dif, expected)
+
+    def test_latest_quote_sorts_unsorted_input(self):
+        quote = latest_quote(self.df.iloc[[2, 0, 1]])
+
+        self.assertEqual(quote["date"], "2026-05-29")
+        self.assertAlmostEqual(quote["change"], 0.5)
+        self.assertAlmostEqual(quote["pct"], 0.5 / 11.5 * 100)
+
+    def test_invalid_market_rows_are_omitted_from_payload_and_quote(self):
+        invalid_rows = pd.DataFrame(
+            [
+                {"code": "600519", "date": "2026-05-30", "open": 12.0, "high": 13.0, "low": 11.5, "close": float("inf"), "volume": 130.0, "amount": 1500.0},
+                {"code": "600519", "date": "invalid", "open": 12.0, "high": 13.0, "low": 11.5, "close": 12.5, "volume": 130.0, "amount": 1500.0},
+                {"code": "600519", "date": "2026-05-31", "open": 12.0, "high": 13.0, "low": 11.5, "close": 12.5, "volume": "invalid", "amount": 1500.0},
+            ]
+        )
+        dirty_df = pd.concat([self.df, invalid_rows], ignore_index=True)
+
+        payload = build_chart_payload(dirty_df, ["MACD", "RSI", "KDJ"])
+        quote = latest_quote(dirty_df)
+
+        self.assertEqual([item["time"] for item in payload["candles"]], ["2026-05-27", "2026-05-28", "2026-05-29"])
+        self.assertEqual(quote["date"], "2026-05-29")
+        self._assert_finite_numbers(payload)
+        self._assert_finite_numbers(quote)
+
+    def test_all_invalid_market_rows_raise_value_error(self):
+        invalid_df = pd.DataFrame(
+            [
+                {"date": "invalid", "open": float("inf"), "high": 11.0, "low": 9.5, "close": 10.5, "volume": 100.0},
+            ]
+        )
+
+        with self.assertRaisesRegex(ValueError, "No valid K-line rows remain"):
+            build_chart_payload(invalid_df, ["MACD"])
+        with self.assertRaisesRegex(ValueError, "No valid K-line rows remain"):
+            latest_quote(invalid_df)
+
+    def test_line_data_omits_non_finite_indicator_values(self):
+        indicator_df = pd.DataFrame(
+            [
+                {"date": "2026-05-27", "TEST": float("inf")},
+                {"date": "2026-05-28", "TEST": float("-inf")},
+                {"date": "2026-05-29", "TEST": 12.5},
+            ]
+        )
+
+        self.assertEqual(_line_data(indicator_df, "TEST"), [{"time": "2026-05-29", "value": 12.5}])
+
+    def _assert_finite_numbers(self, value):
+        if isinstance(value, dict):
+            for item in value.values():
+                self._assert_finite_numbers(item)
+        elif isinstance(value, list):
+            for item in value:
+                self._assert_finite_numbers(item)
+        elif isinstance(value, float):
+            self.assertTrue(math.isfinite(value), repr(value))
