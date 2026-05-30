@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+html, body { margin:0; padding:0; height:100%; background:#fff; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+#wrap { position:relative; width:100%; height:100%; display:flex; flex-direction:column; }
+#main-chart { position:relative; flex:1 1 auto; min-height:320px; }
+.oscillator { position:relative; height:145px; border-top:1px solid #f0f0f0; }
+.oscillator-chart { width:100%; height:100%; }
+.oscillator-title, #legend { position:absolute; z-index:5; background:rgba(255,255,255,.88); border-radius:4px; padding:3px 7px; font-size:11px; color:#595959; }
+.oscillator-title { top:4px; left:8px; }
+#legend { top:8px; right:10px; max-width:70%; }
+#tooltip { display:none; position:absolute; top:8px; left:10px; z-index:10; min-width:210px; padding:6px 10px; background:rgba(255,255,255,.94); border:1px solid #e5e5e5; border-radius:6px; font-size:12px; line-height:1.5; pointer-events:none; }
+#chart-error { display:none; padding:16px; background:#fffbe6; border:1px solid #ffe58f; color:#874d00; font-size:13px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="chart-error">图表初始化失败，请刷新页面重试。</div>
+  <div id="main-chart"><div id="tooltip"></div><div id="legend"></div></div>
+  __OSCILLATOR_SECTIONS__
+</div>
+<script>__RUNTIME_JS__</script>
+<script>
+const PAYLOAD = __PAYLOAD_JSON__;
+const UP = '#ef5350', DOWN = '#26a69a';
+function createOptions(showTimeScale) {
+  return {
+    autoSize:true,
+    layout:{background:{color:'#fff'},textColor:'#333'},
+    grid:{vertLines:{color:'#f5f5f5'},horzLines:{color:'#f5f5f5'}},
+    timeScale:{visible:showTimeScale,borderColor:'#e0e0e0',rightOffset:4},
+    rightPriceScale:{borderColor:'#e0e0e0'},
+    crosshair:{mode:1},
+    localization:{dateFormat:'yyyy-MM-dd',locale:'zh-CN'},
+    handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false},
+    handleScale:{axisPressedMouseMove:true,mouseWheel:true,pinch:true},
+  };
+}
+function addLine(chart, item) {
+  const series = chart.addLineSeries({color:item.color,lineWidth:2,priceLineVisible:false,lastValueVisible:false});
+  series.setData(item.data);
+  return series;
+}
+try {
+  const main = LightweightCharts.createChart(document.getElementById('main-chart'),createOptions(PAYLOAD.oscillators.length === 0));
+  const candles = main.addCandlestickSeries({upColor:UP,downColor:DOWN,wickUpColor:UP,wickDownColor:DOWN,borderUpColor:UP,borderDownColor:DOWN});
+  candles.setData(PAYLOAD.candles);
+  const volume = main.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'volume'});
+  volume.setData(PAYLOAD.volume);
+  main.priceScale('volume').applyOptions({scaleMargins:{top:.78,bottom:0}});
+  const overlaySeries = PAYLOAD.overlays.map(item => ({item,series:addLine(main,item)}));
+  document.getElementById('legend').innerHTML = PAYLOAD.overlays.map(item => '<span style="margin-left:8px;color:'+item.color+'">'+item.label+'</span>').join('');
+  const oscCharts = PAYLOAD.oscillators.map((osc,index) => {
+    const chart = LightweightCharts.createChart(document.getElementById('oscillator-'+index),createOptions(index === PAYLOAD.oscillators.length - 1));
+    const series = osc.series.map(item => {
+      if (item.type !== 'histogram') return addLine(chart,item);
+      const histogram = chart.addHistogramSeries({priceLineVisible:false,lastValueVisible:false});
+      histogram.setData(item.data.map(point => ({...point,color:point.value >= 0 ? 'rgba(239,83,80,.60)' : 'rgba(38,166,154,.60)'})));
+      return histogram;
+    });
+    (osc.referenceLines || []).forEach(line => series[0].createPriceLine({price:line.value,color:line.color,lineWidth:1,lineStyle:2,axisLabelVisible:true,title:line.label}));
+    return {chart,series};
+  });
+  let syncing = false;
+  const syncRange = (source,targets) => source.timeScale().subscribeVisibleLogicalRangeChange(range => {
+    if (syncing || !range) return;
+    syncing = true;
+    targets.forEach(target => target.timeScale().setVisibleLogicalRange(range));
+    syncing = false;
+  });
+  syncRange(main,oscCharts.map(item => item.chart));
+  oscCharts.forEach(item => syncRange(item.chart,[main,...oscCharts.filter(other => other !== item).map(other => other.chart)]));
+  const previous = Object.fromEntries(PAYLOAD.candles.map(item => [item.time,item.prevClose]));
+  main.subscribeCrosshairMove(param => {
+    if (!param.time || !param.point) {
+      document.getElementById('tooltip').style.display = 'none';
+      oscCharts.forEach(item => item.chart.clearCrosshairPosition());
+      return;
+    }
+    const value = param.seriesData.get(candles);
+    if (!value) return;
+    const pct = (value.close - previous[param.time]) / previous[param.time] * 100;
+    const extra = overlaySeries.map(({item,series}) => {
+      const point = param.seriesData.get(series);
+      return point ? '<div style="color:'+item.color+'">'+item.label+' '+point.value.toFixed(2)+'</div>' : '';
+    }).join('');
+    const tooltip = document.getElementById('tooltip');
+    tooltip.innerHTML = '<div>'+param.time+'</div><b>开 '+value.open.toFixed(2)+' 高 '+value.high.toFixed(2)+' 低 '+value.low.toFixed(2)+' 收 '+value.close.toFixed(2)+' ('+(pct >= 0 ? '+' : '')+pct.toFixed(2)+'%)</b>'+extra;
+    tooltip.style.display = 'block';
+    oscCharts.forEach(item => item.series[0] && item.chart.setCrosshairPosition(NaN,param.time,item.series[0]));
+  });
+  main.timeScale().fitContent();
+  oscCharts.forEach(item => item.chart.timeScale().fitContent());
+} catch (error) {
+  console.error(error);
+  document.getElementById('chart-error').style.display = 'block';
+}
+</script>
+</body>
+</html>

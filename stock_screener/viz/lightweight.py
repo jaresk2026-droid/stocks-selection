@@ -187,3 +187,22 @@ def build_chart_payload(raw_df: pd.DataFrame, indicators: Iterable[str], bars: i
         "oscillators": oscillators,
         "height": 500 + 150 * len(oscillators),
     }
+
+
+def render_chart_html(payload: dict, runtime_js: str | None = None, runtime_path: str | Path = RUNTIME_PATH) -> str:
+    if runtime_js is None:
+        try:
+            runtime_js = Path(runtime_path).read_text(encoding="utf-8")
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(f"lightweight-charts runtime not found: {runtime_path}") from exc
+    sections = "".join(
+        f'<div class="oscillator"><div class="oscillator-title">{item["title"]}</div>'
+        f'<div class="oscillator-chart" id="oscillator-{index}"></div></div>'
+        for index, item in enumerate(payload["oscillators"])
+    )
+    return (
+        TEMPLATE_PATH.read_text(encoding="utf-8")
+        .replace("__RUNTIME_JS__", runtime_js)
+        .replace("__PAYLOAD_JSON__", json.dumps(payload, ensure_ascii=False))
+        .replace("__OSCILLATOR_SECTIONS__", sections)
+    )

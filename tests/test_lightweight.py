@@ -12,6 +12,7 @@ from stock_screener.viz.lightweight import (
     latest_quote,
     range_presets,
     recommend_indicators,
+    render_chart_html,
 )
 
 
@@ -137,6 +138,26 @@ class LightweightChartModelTests(unittest.TestCase):
         )
 
         self.assertEqual(_line_data(indicator_df, "TEST"), [{"time": "2026-05-29", "value": 12.5}])
+
+    def test_render_chart_html_injects_runtime_payload_and_oscillator_sections(self):
+        payload = build_chart_payload(self.df, ["MACD", "RSI"])
+
+        html = render_chart_html(payload, runtime_js="window.LightweightCharts = {};")
+
+        self.assertIn("window.LightweightCharts = {};", html)
+        self.assertIn('"key": "MACD"', html)
+        self.assertIn('"key": "RSI"', html)
+        self.assertIn("oscillator-0", html)
+        self.assertIn("oscillator-1", html)
+        self.assertNotIn("__RUNTIME_JS__", html)
+        self.assertNotIn("__PAYLOAD_JSON__", html)
+        self.assertNotIn("__OSCILLATOR_SECTIONS__", html)
+
+    def test_render_chart_html_raises_when_runtime_file_is_missing(self):
+        payload = {"candles": [], "volume": [], "overlays": [], "oscillators": [], "height": 500}
+
+        with self.assertRaisesRegex(FileNotFoundError, "lightweight-charts"):
+            render_chart_html(payload, runtime_path="missing.js")
 
     def _assert_finite_numbers(self, value):
         if isinstance(value, dict):
