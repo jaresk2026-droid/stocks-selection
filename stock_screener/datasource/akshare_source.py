@@ -85,20 +85,31 @@ def fetch_kline(code: str, period: str = "daily", start_date: str | None = None,
     """获取单只股票的日/周/月 K 线（前复权）。
 
     start_date / end_date 格式 YYYYMMDD；缺省用 config.HISTORY_START ~ 今天。
+
+    主源东方财富(akshare)失败时自动回退 baostock（沪深，前复权日/周/月线）。
+    回退仅覆盖沪深；北交所等 baostock 不支持的会继续抛出原始错误。
     """
     if period not in _PERIOD_ARG:
         raise ValueError(f"日/周/月周期错误 {period!r}")
     start = start_date or HISTORY_START
     end = end_date or pd.Timestamp.today().strftime("%Y%m%d")
-    df = _retry(
-        ak.stock_zh_a_hist,
-        symbol=code,
-        period=_PERIOD_ARG[period],
-        start_date=start,
-        end_date=end,
-        adjust=ADJUST,
-    )
-    return _standardize_kline(df, code)
+    try:
+        df = _retry(
+            ak.stock_zh_a_hist,
+            symbol=code,
+            period=_PERIOD_ARG[period],
+            start_date=start,
+            end_date=end,
+            adjust=ADJUST,
+            retries=1,  # 有 baostock 兜底，主源快速失败即回退，避免全量时逐只长时间重试
+        )
+        return _standardize_kline(df, code)
+    except Exception as ak_err:  # noqa: BLE001 - 主源失败，尝试备份源
+        from stock_screener.datasource import baostock_source as bs_src
+        try:
+            return bs_src.fetch_kline(code, period=period, start_date=start, end_date=end)
+        except Exception:  # noqa: BLE001 - 备份源也失败，抛出主源错误更有信息量
+            raise ak_err
 
 
 # ---------------- 基本面 ----------------
