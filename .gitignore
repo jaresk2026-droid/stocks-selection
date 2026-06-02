@@ -19,3 +19,5 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+.superpowers/
+.worktrees/
