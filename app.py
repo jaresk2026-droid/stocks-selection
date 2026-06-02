@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import html
 import io
 from datetime import datetime
 
@@ -196,7 +197,8 @@ if run:
         st.session_state["cond_names"] = names
         st.session_state["selection_snapshot"] = list(selection)
         st.session_state["screen_period"] = period
-        for key in ("detail_code", "detail_period", "detail_indicators"):
+        st.session_state["condition_count"] = len(conditions)
+        for key in ("detail_code", "detail_period", "detail_period_label", "detail_indicators"):
             st.session_state.pop(key, None)
 
 # ==================== 主区 ====================
@@ -239,7 +241,11 @@ else:
             "#52c41a",
         )
     with c3:
-        metric_card("已选条件", str(len(st.session_state.get("selection_snapshot", []))), "#fa8c16")
+        metric_card(
+            "已选条件",
+            str(st.session_state.get("condition_count", len(st.session_state.get("selection_snapshot", [])))),
+            "#fa8c16",
+        )
 
     if result.empty:
         st.info("没有符合条件的股票，试试放宽阈值或改用 OR 组合。")
@@ -265,7 +271,13 @@ else:
             st.session_state["detail_period"] = screen_period
         detail_labels = list(PERIOD_LABELS)
         default_period_index = list(PERIOD_LABELS.values()).index(st.session_state["detail_period"])
-        detail_period_label = st.radio("图表周期", detail_labels, index=default_period_index, horizontal=True)
+        detail_period_label = st.radio(
+            "图表周期",
+            detail_labels,
+            index=default_period_index,
+            horizontal=True,
+            key="detail_period_label",
+        )
         detail_period = PERIOD_LABELS[detail_period_label]
         st.session_state["detail_period"] = detail_period
 
@@ -285,19 +297,19 @@ else:
             help="默认根据本次筛选条件自动选择；可以多选展开更多副图。",
         )
         if not detail_indicators:
-            st.info("至少保留一个指标副图。已恢复默认 MACD。")
-            detail_indicators = ["MACD"]
-            st.session_state["detail_indicators"] = detail_indicators
+            st.info("至少保留一个指标副图。本次图表先按默认 MACD 展示。")
+        chart_indicators = detail_indicators or ["MACD"]
 
-        detail_df = db.load_kline(pick, detail_period).tail(bars).reset_index(drop=True)
+        detail_df = db.load_kline(pick, detail_period)
         if detail_df.empty:
             st.warning(f"{labels.get(pick, pick)} 暂无{detail_period_label}数据，请切换其他周期。")
         else:
-            quote = latest_quote(detail_df)
+            quote = latest_quote(detail_df.tail(bars))
             color = "#e3494f" if quote["change"] >= 0 else "#22a76b"
             sign = "+" if quote["change"] >= 0 else ""
+            stock_label = html.escape(labels.get(pick, pick))
             st.markdown(
-                f"<h3 style='margin-bottom:4px'>{labels.get(pick, pick)}</h3>"
+                f"<h3 style='margin-bottom:4px'>{stock_label}</h3>"
                 f"<div style='color:{color};font-size:13px'>"
                 f"{quote['close']:.2f}　{sign}{quote['change']:.2f} ({sign}{quote['pct']:.2f}%)　"
                 f"开 {quote['open']:.2f}　高 {quote['high']:.2f}　低 {quote['low']:.2f}　量 {quote['volume']:.0f}</div>",
@@ -305,7 +317,7 @@ else:
             )
             st.caption("拖动平移 · 滚轮或双指缩放 · 十字光标查看 OHLC")
             try:
-                payload = build_chart_payload(detail_df, detail_indicators)
+                payload = build_chart_payload(detail_df, chart_indicators, bars=bars)
                 components.html(render_chart_html(payload), height=payload["height"], scrolling=False)
             except Exception as exc:
                 st.error(f"图表加载失败：{exc}")
